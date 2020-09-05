@@ -1,111 +1,94 @@
 #include <stdio.h>
 #include<stdlib.h>
 #include<string.h>
-#include<netinet/ip.h>
-#include<net/ethernet.h>
-#include<sys/socket.h>
-#include<arpa/inet.h>
-#include<net/if.h>
-/*
-  Must be run with sudo privilidges.
-*/
+#include<netinet/ip.h>    //IP Header
+#include<net/ethernet.h>  //for htons ETH_P_ALL
+#include<sys/socket.h>    //Sockets API
+#include<arpa/inet.h>     //inet_ntoa
 
-void read_packet(unsigned char* , int);
+void extract_ethernet_frame(unsigned char* , int);
+void extract_ip_header(unsigned char* buffer, int size);
+void extract_icmp_packet(unsigned char* buffer, int size);
+
 int total=0;
+struct sockaddr_in source, dest;
 
 int main(int argc, char **argv) {
-  //Raw sockets operate at the network OSI level; TCP, UDP not decoded.
 
-  //IPv4, Raw Socket, All Packets.
+  //Creates a raw socket, that accepts packets.
   int r_sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
   if (r_sock == -1){
     perror("Socket creation failed.\n");
     exit(1);
   }
 
+  //Create a buffer to accept incomming packets.
   int packet_size;
-  //String buffer to hold incoming packets:
   unsigned char *buffer = (unsigned char *)malloc(65536);
-  struct sockaddr_in source_socket_address, dest_socket_address;
 
+  //Loop & Accept packets:
   while(1) {
-    //Recieves a message from socket.
-    /*Socket, Buffer:message stored, 65536:max IP packet size (buffer length),
-     Flags:0 - type of reception, address:sending address is to be stored. address_len: length of sockaddr structure*/
     packet_size = recvfrom(r_sock, buffer, 65536, 0 ,NULL, NULL);
     if (packet_size == -1) {
       printf("Failed to get packets\n");
       return 1;
     }
-    read_packet(buffer, packet_size);
-
-
-
+    //Extract data from each packet.
+    extract_ethernet_frame(buffer, packet_size);
   }
-
   return 0;
 }
 
-void read_packet(unsigned char* buffer, int size){
-  //Big/ Little Endian???
-
-  //Getting the Ethernet Header:
-  /*
-    struct ethhdr {
-      unsigned char h_dest[ETH_ALEN];   //destination eth addr #define ETH_ALEN	6		/* Octets in one ethernet addr
-      unsigned char h_sourec[ETH_ALEN]; //source ether addr
-      __be16 h_proto;                   //packet type D field
-
-    }
-  */
-  printf("Ethernet Layer: \n");
+/*Ethernet Frame Structure :
+    (Preamable + SDF = 8) | (6) Destination * | (6) Source * | (2) Type *
+*/
+void extract_ethernet_frame(unsigned char* buffer, int size){
+  //Declare pointer called eth to an ethhdr structure;
   struct ethhdr * eth = (struct ethhdr *)(buffer);
-  printf("\t | -source MAC: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", eth->h_source[0], eth->h_source[1], eth->h_source[2], eth->h_source[3], eth->h_source[4], eth->h_source[5]);
-  printf("\t | -destination MAC: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", eth->h_dest[0], eth->h_dest[1], eth->h_dest[2], eth->h_dest[3], eth->h_dest[4], eth->h_dest[5]);
-  printf("\t | -protocol : %d\n", eth->h_proto);
 
-  /*
-  struct iphdr {
-  #if defined(__LITTLE_ENDIAN_BITFIELD)
-      __u8    ihl:4,
-              version:4;
-  #elif defined (__BIG_ENDIAN_BITFIELD)
-      __u8    version:4,
-              ihl:4;
-  #else
-      #error  "Please fix <asm/byteorder.h>"
-  #endif
-       __u8   tos;
-       __u16  tot_len;
-       __u16  id;
-       __u16  frag_off;
-       __u8   ttl;
-       __u8   protocol;
-       __u16  check;
-       __u32  saddr;
-       __u32  daddr;
+  printf("Ethernet Frame: \n");
+  printf("\t  | Source MAC: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X", eth->h_source[0], eth->h_source[1], eth->h_source[2], eth->h_source[3], eth->h_source[4], eth->h_source[5]);
+  printf("    | Destination MAC: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X", eth->h_dest[0], eth->h_dest[1], eth->h_dest[2], eth->h_dest[3], eth->h_dest[4], eth->h_dest[5]);
+  printf("    | Protocol : %d\n", eth->h_proto);
 
-      };
-  */
-
-  printf("IP Header: \n");
-  struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr));
-  printf("\t |- Version: %d\n", (unsigned int)iph->version);
-  printf("\t |- Protocol: %d\n", (unsigned int)iph->protocol);
-
+  //Extract the next layer: (IP)
+  extract_ip_header(buffer, size);
 }
 
-
-
-/*
-https://squidarth.com/networking/systems/rc/2018/05/28/using-raw-sockets.html
-http://www.microhowto.info/howto/capture_ethernet_frames_using_an_af_packet_socket_in_c.html
-
-IPROTO_RAW: You can interact with layer 3 (IP); not just 4 (TCP/UDP)
-AF_INET: IPv4 (type of addresses socket can communicate with.)
-AF_PACKET: Captures ethernet frames.
-SOCK_RAW: Results in a raw packet;
-IPPROTO_RAW.
-
-
+/*IP Header Structure :
+  (4) Version * | (4) Header Length * | (8) Type * |
+  (16) Length Total | (16) Trusted Host ID | (3) Flags | (13) Fragment Offset
+  (8) TTL * | (8) Protocol * | (16) Checksum * | (32) Src Addr * | (32) Dest Addr *
+  (x * 32) Options & Padding.
 */
+void extract_ip_header(unsigned char* buffer, int size){
+  printf("IP Header: \n");
+  //Buffer is a pointer; iphdr located after ethernet header
+  struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr)); //Buffer is a pointer;
+
+  //Reset the address value; fill with saddr from the ip header.
+  memset(&source, 0, sizeof(source));
+  source.sin_addr.s_addr = iph->saddr;
+  memset(&dest, 0, sizeof(dest));
+  dest.sin_addr.s_addr = iph->daddr;
+
+  printf("\t |IP Version: %d", (unsigned int)iph->version);
+  printf("   |Header Length: %d Bytes", ((unsigned int)(iph->ihl))*4);
+  printf("   |TTL: %d", (unsigned int)iph->ttl);
+  printf("   |Protocol: %d\n", (unsigned int)iph->protocol);
+
+  //inet_ntoa: Accepts Internet address (32-bit quantity in network byte order)
+  //Returns string in dotted notation.
+  printf("\t |SourceIP : %s", inet_ntoa(source.sin_addr));
+  printf("   |Destination IP: %s\n", inet_ntoa(dest.sin_addr));
+
+  int protocol  = (unsigned int)iph->protocol;
+  //Different protocols result in different structures.
+  if (protocol == 1){ //ICMP
+      extract_icmp_packet(buffer, size);
+  }
+}
+
+void extract_icmp_packet(unsigned char* buffer, int size){
+  printf("ICMP Packet: ")
+}
