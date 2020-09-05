@@ -10,7 +10,7 @@
   Must be run with sudo privilidges.
 */
 
-void identify_protocol(unsigned char* , int);
+void read_packet(unsigned char* , int);
 int total=0;
 
 int main(int argc, char **argv) {
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
       printf("Failed to get packets\n");
       return 1;
     }
-    identify_protocol(buffer, packet_size);
+    read_packet(buffer, packet_size);
 
 
 
@@ -46,26 +46,53 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-void identify_protocol(unsigned char* buffer, int size){
-    //Just gets the IP header part: how do you get the ethernet?
+void read_packet(unsigned char* buffer, int size){
+  //Big/ Little Endian???
+
+  //Getting the Ethernet Header:
+  /*
+    struct ethhdr {
+      unsigned char h_dest[ETH_ALEN];   //destination eth addr #define ETH_ALEN	6		/* Octets in one ethernet addr
+      unsigned char h_sourec[ETH_ALEN]; //source ether addr
+      __be16 h_proto;                   //packet type D field
+
+    }
+  */
+  printf("Ethernet Layer: \n");
+  struct ethhdr * eth = (struct ethhdr *)(buffer);
+  printf("\t | -source MAC: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", eth->h_source[0], eth->h_source[1], eth->h_source[2], eth->h_source[3], eth->h_source[4], eth->h_source[5]);
+  printf("\t | -destination MAC: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", eth->h_dest[0], eth->h_dest[1], eth->h_dest[2], eth->h_dest[3], eth->h_dest[4], eth->h_dest[5]);
+  printf("\t | -protocol : %d\n", eth->h_proto);
+
+  /*
+  struct iphdr {
+  #if defined(__LITTLE_ENDIAN_BITFIELD)
+      __u8    ihl:4,
+              version:4;
+  #elif defined (__BIG_ENDIAN_BITFIELD)
+      __u8    version:4,
+              ihl:4;
+  #else
+      #error  "Please fix <asm/byteorder.h>"
+  #endif
+       __u8   tos;
+       __u16  tot_len;
+       __u16  id;
+       __u16  frag_off;
+       __u8   ttl;
+       __u8   protocol;
+       __u16  check;
+       __u32  saddr;
+       __u32  daddr;
+
+      };
+  */
+
+  printf("IP Header: \n");
   struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr));
-  ++total;
-  switch(iph->protocol){
-    case 1:
-      printf("ICMP");
-      break;
-    case 2:
-      printf("IGMP");
-      break;
-    case 6:
-      printf("TCP");
-      break;
-    case 17:
-      printf("UDP");
-      break;
-    default:
-      break;
-  }
+  printf("\t |- Version: %d\n", (unsigned int)iph->version);
+  printf("\t |- Protocol: %d\n", (unsigned int)iph->protocol);
+
 }
 
 
