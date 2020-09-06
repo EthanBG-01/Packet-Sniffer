@@ -5,10 +5,14 @@
 #include<net/ethernet.h>  //for htons ETH_P_ALL
 #include<sys/socket.h>    //Sockets API
 #include<arpa/inet.h>     //inet_ntoa
+#include<netinet/tcp.h>
+#include<netinet/ip_icmp.h> //ICMP
 
 void extract_ethernet_frame(unsigned char* , int);
-void extract_ip_header(unsigned char* buffer, int size);
-void extract_icmp_packet(unsigned char* buffer, int size);
+void extract_ip_header(unsigned char* buffer, int size, int pointer);
+void extract_icmp_packet(unsigned char* buffer, int size, int pointer);
+void extract_tcp_packet(unsigned char* buffer, int size, int pointer);
+
 
 int total=0;
 struct sockaddr_in source, dest;
@@ -52,7 +56,8 @@ void extract_ethernet_frame(unsigned char* buffer, int size){
   printf("    | Protocol : %d\n", eth->h_proto);
 
   //Extract the next layer: (IP)
-  extract_ip_header(buffer, size);
+  int pointer = sizeof(struct ethhdr);
+  extract_ip_header(buffer, size, pointer);
 }
 
 /*IP Header Structure :
@@ -61,10 +66,13 @@ void extract_ethernet_frame(unsigned char* buffer, int size){
   (8) TTL * | (8) Protocol * | (16) Checksum * | (32) Src Addr * | (32) Dest Addr *
   (x * 32) Options & Padding.
 */
-void extract_ip_header(unsigned char* buffer, int size){
+void extract_ip_header(unsigned char* buffer, int size, int pointer){
   printf("IP Header: \n");
   //Buffer is a pointer; iphdr located after ethernet header
-  struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr)); //Buffer is a pointer;
+  struct iphdr *iph = (struct iphdr*)(buffer + pointer); //Buffer is a pointer;
+
+  //IP length + size of iphdr
+  pointer = pointer + sizeof(struct iphdr) + ((unsigned int)(iph->ihl))*4;
 
   //Reset the address value; fill with saddr from the ip header.
   memset(&source, 0, sizeof(source));
@@ -85,10 +93,36 @@ void extract_ip_header(unsigned char* buffer, int size){
   int protocol  = (unsigned int)iph->protocol;
   //Different protocols result in different structures.
   if (protocol == 1){ //ICMP
-      extract_icmp_packet(buffer, size);
+      printf("ICMP\n");
+      extract_icmp_packet(buffer, size, pointer);
+  } else if (protocol == 6){
+    printf("TCP\n");
+    extract_tcp_packet(buffer, size, pointer);
   }
 }
 
-void extract_icmp_packet(unsigned char* buffer, int size){
-  printf("ICMP Packet: ")
+/*
+  TCP Packet
+  (16) Source * | (16) Dest * | (32) Sequence Num * | (32) Acknowledgement Num *
+  (var) Data Offset (Header Length) | (6) Reserved | (6) Flags *| (16) Window
+  (16) Checksum | (16) Urgent Pointer | (var) Options | (var) Data 
+*/
+void extract_tcp_packet(unsigned char* buffer, int size, int pointer){
+    struct tcphdr * tcph = (struct tcphdr *)(buffer + pointer);
+    printf("| - Source Port: %u", ntohs(tcph->source));
+    printf(" - Destination Port: %u\n", ntohs(tcph->dest));
+    printf("| - Sequence: %u", tcph->seq);
+    printf("| - Acknowledgement: %u\n",tcph->ack_seq);
+    printf("FLAGS: ");
+    printf("URG: %d, ACK: %d, PSH: %d,", tcph->urg, tcph->ack, tcph->psh);
+    printf(" RST: %d, SYN: %d, FIN: %d\n", tcph->rst, tcph->syn, tcph->fin);
+}
+
+/* ICMP Packet structure:
+    (4) Type * | (4) Code  * | (8) Checksum * | (x*32) Data *
+*/
+void extract_icmp_packet(unsigned char* buffer, int size, int pointer){
+  struct icmphdr * icmp = (struct icmphdr *)(buffer + pointer);
+  printf("ICMP Packet: ");
+  printf("ICMP msgtype=%d, code=%d\n", icmp->type, icmp->code);
 }
